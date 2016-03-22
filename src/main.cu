@@ -104,26 +104,27 @@ __global__ void find_nearest(d_Particles parts, int atom_count)
     }
 }
 
-__global__ void pairlistGPU(float3* r, int *t, int N, int* d_pairsCount, int* d_pairs){
+__global__ void pairlistGPU(d_Particles parts, int atom_count)
+{
 	int i, j;
 	i = blockIdx.x*blockDim.x + threadIdx.x;
-	if (i < N)
+	if (i < atom_count)
     {
-		float3 ri = r[i];
+		float3 ri = parts.c[i];
 		int pairsCount = 0;
-		for(j = 0; j < N; j++)
+		for(j = 0; j < atom_count; j++)
         {
-			if ( (j != i) && (t[j] != TYPENONE) )
+			if ( (j != i) && (parts.t[j] != TYPENONE) )
             {
-				float3 rj = r[j];
+				float3 rj = parts.c[j];
 				if( (getDistance(ri, rj, LIMIT) < PAIRSCUTOFF) && pairsCount < MAXPAIRS)
                 {
-					d_pairs[pairsCount*N + i] = j;
+					parts.pairs[pairsCount*atom_count + i] = j;
 					pairsCount ++;
 				}
 			}
 		}
-		d_pairsCount[i] = pairsCount;
+	    parts.pairsCount[i] = pairsCount;
 	}
 }
 
@@ -241,20 +242,20 @@ __global__ void computeLJPairlist(float3* r, float3* f, int* type, int N, int* d
 	}
 }
 
-__global__ void computeHarmPairlist(float3* r, float3* f, int* type, int N, int* d_pairsCount, int* d_pairs)
+__global__ void computeHarmPairlist(d_Particles parts, int atom_count)
 {
 	int i, j, p;
 	i = blockIdx.x*blockDim.x + threadIdx.x;
-	if (i < N)
+	if (i < atom_count)
     {
-		float3 fi = f[i];
-		float3 ri = r[i];
-		for(p = 0; p < d_pairsCount[i]; p++)
+		float3 fi = parts.f[i];
+		float3 ri = parts.c[i];
+		for(p = 0; p < parts.pairsCount[i]; p++)
         {
-			j = d_pairs[p*N + i];
-            if(type[j] != TYPENONE)
+			j = parts.pairs[p*atom_count + i];
+            if(parts.t[j] != TYPENONE)
             {
-                float3 rj = r[j];
+                float3 rj = parts.c[j];
                 float3 rij = getVector(ri, rj, LIMIT);
                 float rijmod2 = rij.x*rij.x + rij.y*rij.y + rij.z*rij.z;
                 float rijmod = sqrtf(rijmod2);
@@ -274,13 +275,13 @@ __global__ void computeHarmPairlist(float3* r, float3* f, int* type, int N, int*
                 fi.z += df*rij.z;
             }
 		}
-		f[i] = fi;
-        if(!isfinite(f[i].x))
-            f[i].x = 0.0f;
-        if(!isfinite(f[i].y))
-            f[i].y = 0.0f;
-        if(!isfinite(f[i].z))
-            f[i].z = 0.0f;
+		parts.f[i] = fi;
+        if(!isfinite(parts.f[i].x))
+            parts.f[i].x = 0.0f;
+        if(!isfinite(parts.f[i].y))
+            parts.f[i].y = 0.0f;
+        if(!isfinite(parts.f[i].z))
+            parts.f[i].z = 0.0f;
 	}
 }
 
@@ -360,22 +361,23 @@ int main(int argc, char **argv)
     int Nsteps = 25000000;
     int pairsfreq = 100;
     int dcdfreq = 1000;
-    createDCD(&dcd, 3*in_xyz.atomCount, Nsteps/dcdfreq, 0, 1, 100, 0,0,0,0);
-    createDCD(&vels, 3*in_xyz.atomCount, Nsteps/dcdfreq, 0, 1, 100, 0,0,0,0);
-    dcdOpenWrite(&dcd, "out.dcd");
-    dcdOpenWrite(&vels, "out_vels.dcd");
-    dcdWriteHeader(dcd);
-    dcdWriteHeader(vels);
+    dcd.N = 3*in_xyz.atomCount; vels.N = 3*in_xyz.atomCount;
+    dcd.NFILE = Nsteps/dcdfreq; vels.NFILE = Nsteps/dcdfreq;
+    dcd.NPRIV = 1;              vels.NPRIV = 1;
+    dcd.NSAVC = dcdfreq;        vels.NSAVC = dcdfreq;
+    dcd.DELTA = DT;             vels.DELTA = DT;
+    dcd.open_write("out.dcd");  vels.open_write("out.dcd");
+    dcd.write_header();         vels.write_header();
+    dcd.allocate();             vels.allocate();
     std::cout<<"Starting simulation with "<<part.c.d.size()<<" particles."<<std::endl;
     initTimer();
     for(unsigned int step = 0; step < Nsteps; step++)
     {
         if(step%pairsfreq == 0)
         {
-            pairlistGPU<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part.c, d_part.t, in_xyz.atomCount, d_part.pairsCount, d_part.pairs);
+            pairlistGPU<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
         }
-//        computeLJPairlist<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part.c, d_part.f, d_part.t, in_xyz.atomCount, d_part.pairsCount, d_part.pairs);
-        computeHarmPairlist<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part.c, d_part.f, d_part.t, in_xyz.atomCount, d_part.pairsCount, d_part.pairs);
+        computeHarmPairlist<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
         find_nearest<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
         checkCUDAError();
 //        part.nearest.d2h();
@@ -392,12 +394,9 @@ int main(int argc, char **argv)
         {
             for(unsigned int i = 0; i < 3*in_xyz.atomCount; i++)
             {
-                dcd.frame.X[i] = 0;
-                dcd.frame.Y[i] = 0;
-                dcd.frame.Z[i] = 0;
-                vels.frame.X[i] = 0;
-                vels.frame.Y[i] = 0;
-                vels.frame.Z[i] = 0;
+                dcd.X[i] = 0;    vels.X[i] = 0;
+                dcd.Y[i] = 0;    vels.Y[i] = 0;
+                dcd.Z[i] = 0;    vels.Z[i] = 0;
             }
             int c_a = 0;
             int c_b = in_xyz.atomCount;
@@ -424,30 +423,26 @@ int main(int argc, char **argv)
                     offset = c_c;
                     c_c += 1;
                 }
-                dcd.frame.X[offset] = part.c.h[i].x;
-                dcd.frame.Y[offset] = part.c.h[i].y;
-                dcd.frame.Z[offset] = part.c.h[i].z;
-                vels.frame.X[offset] = part.v.h[i].x;
-                vels.frame.Y[offset] = part.v.h[i].y;
-                vels.frame.Z[offset] = part.v.h[i].z;
+                dcd.X[offset] = part.c.h[i].x;    vels.X[offset] = part.v.h[i].x;
+                dcd.Y[offset] = part.c.h[i].y;    vels.Y[offset] = part.v.h[i].y;
+                dcd.Z[offset] = part.c.h[i].z;    vels.Z[offset] = part.v.h[i].z;
                 double v2 = 0;
                 if (part.t.h[i] != TYPENONE)
                 {
                     float m = ind2mass[part.t.h[i]];
-                    v2 = vels.frame.X[offset]*vels.frame.X[offset];
-                    v2 += vels.frame.Y[offset]*vels.frame.Y[offset];
-                    v2 += vels.frame.Z[offset]*vels.frame.Z[offset];
+                    v2 = vels.X[offset]*vels.X[offset];
+                    v2 += vels.Y[offset]*vels.Y[offset];
+                    v2 += vels.Z[offset]*vels.Z[offset];
                     E += m*v2/2;
                 }
             }
             E = E/(c_a+c_b+c_c - 3*in_xyz.atomCount);
             std::cout<<step<<" "<<c_a<<" "<<c_b-in_xyz.atomCount<<" "<<c_c-in_xyz.atomCount*2<<" "<<2.0*E/3.0/8.314<<std::endl;
-            dcdWriteFrame(dcd);
-            dcdWriteFrame(vels);
+            dcd.write_frame();  vels.write_frame();
             printTime(step);
         }
     }
-    dcdClose(dcd);
-    dcdClose(vels);
+    dcd.close();
+    vels.close();
     return 0; 
 }

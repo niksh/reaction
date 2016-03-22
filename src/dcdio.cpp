@@ -1,7 +1,7 @@
 /*
  *  dcdio.c
  *
- * Code to work with dcd files.
+ * Code to work with dcd files. On Oct 30, 2008 only writing is implemented.
  *
  *  Created on: Oct 29, 2008
  *      Author: zhmurov
@@ -11,38 +11,15 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#ifdef UNWRAP
+# define safe_fopen fopen
+# define safe_fgets fgets
+# define safe_fread fread
+# define DIE(format, ...) do{ printf(format, ##__VA_ARGS__); exit(-1); }while(0);
+#else
+# include "wrapper.h"
+#endif
 #include "dcdio.h"
-
-void createDCD(DCD* dcd, int atomCount, int frameCount, int firstFrame, float timestep, int dcdFreq, int hazUC, int UCX, int UCY, int UCZ){
-	dcd->header.N = atomCount;
-	dcd->header.delta = timestep;
-	dcd->header.nfile = frameCount;
-	dcd->header.npriv = firstFrame;
-	dcd->header.nsavc = dcdFreq;
-	dcd->header.nstep = frameCount*dcdFreq;
-	sprintf(dcd->header.remark1, "REMARKS CREATED BY dcdio.c");
-	time_t rawtime;
-	struct tm * timeinfo;
-	time(&rawtime);
-	timeinfo = localtime(&rawtime);
-	sprintf(dcd->header.remark2, "REMARKS DATE: %s", asctime(timeinfo));
-	dcd->hasUC = hazUC;
-	dcd->uc.a = UCX;
-	dcd->uc.b = UCY;
-	dcd->uc.c = UCZ;
-	dcd->uc.alpha = 0;
-	dcd->uc.beta = 0;
-	dcd->uc.gamma = 0;
-	dcd->frame.X = (float*)calloc(atomCount, sizeof(float));
-	dcd->frame.Y = (float*)calloc(atomCount, sizeof(float));
-	dcd->frame.Z = (float*)calloc(atomCount, sizeof(float));
-}
-
-void destroyDCD(DCD* dcd){
-	free(dcd->frame.X);
-	free(dcd->frame.Y);
-	free(dcd->frame.Z);
-}
 
 /*
  * Extend the string to be 80 bytes length (for remarks in header)
@@ -54,19 +31,38 @@ void pad(char *s, int len);
  * Open DCD file to write data into.
  * The FILE* pointer is returned and must be used for further calls
  */
-void dcdOpenWrite(DCD* dcd, const char *dcd_filename){
-	dcd->file = fopen(dcd_filename, "w");
+void DCD::open_write(const char *dcd_filename){
+	this->file = safe_fopen(dcd_filename, "w");
 }
 
-void dcdOpenAppend(DCD* dcd, const char *dcd_filename){
-	dcd->file = fopen(dcd_filename, "a");
+void DCD::open_append(const char *dcd_filename){
+	this->file = safe_fopen(dcd_filename, "a");
 }
+
+void DCD::open_read(const char *dcd_filename){
+	this->file = safe_fopen(dcd_filename, "r");
+}
+
+void DCD::close(){
+	fclose(this->file);
+}
+
+void DCD::allocate(){
+    this->X = (float*) malloc(N * sizeof(float));
+    this->Y = (float*) malloc(N * sizeof(float));
+    this->Z = (float*) malloc(N * sizeof(float));
+}
+
+void DCD::deallocate(){
+    if(this->X) free(this->X);
+    if(this->Y) free(this->Y);
+    if(this->Z) free(this->Z);
+}
+
 
 /*
  * Write header to dcd file.
  * Inputs are:
- *  dcd_file - FILE* object from dcd_open_write call
- *  dcd_filename - dcd filename to write into remarks
  *  N - Number of atoms/beads in a system
  *	NFILE - Number of frames (will not be updated in current implementation)
  *	NPRIV - Starting timestep of DCD file - NOT ZERO
@@ -101,63 +97,64 @@ void dcdOpenAppend(DCD* dcd, const char *dcd_filename){
  *  69			4				'4'
  *
  */
-void dcdWriteHeader( DCD dcd){
-	FILE* dcd_file = dcd.file;
+void DCD::write_header() const {
 	int iout;
 	float fout;
-	char cout[4];
+	char cout[5];
 	iout = 84;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 	sprintf(cout, "CORD");
-	fwrite(&cout, 4, 1, dcd_file);
-	iout = dcd.header.nfile;
-	fwrite(&iout, 4, 1, dcd_file);
-	iout = dcd.header.npriv;
-	fwrite(&iout, 4, 1, dcd_file);
-	iout = dcd.header.nsavc;
-	fwrite(&iout, 4, 1, dcd_file);
-	iout = dcd.header.npriv-dcd.header.nsavc;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&cout, 4, 1, this->file);
+	iout = NFILE;
+	fwrite(&iout, 4, 1, this->file);
+	iout = NPRIV;
+	fwrite(&iout, 4, 1, this->file);
+	iout = NSAVC;
+	fwrite(&iout, 4, 1, this->file);
+	iout = NPRIV-NSAVC;
+	fwrite(&iout, 4, 1, this->file);
 	iout = 0;
 	for(int i = 0; i < 5; i++){
-		fwrite(&iout, 4, 1, dcd_file);
+		fwrite(&iout, 4, 1, this->file);
 	}
-	fout = dcd.header.delta;
-	fwrite(&fout, 4, 1, dcd_file);
-	fwrite(&dcd.hasUC, 4, 1, dcd_file);
-	for(int i = 0; i < 8; i++){
-		fwrite(&iout, 4, 1, dcd_file);
+	fout = DELTA;
+	fwrite(&fout, 4, 1, this->file);
+	iout = 0;
+	for(int i = 0; i < 9; i++){
+		fwrite(&iout, 4, 1, this->file);
 	}
 	iout = 24;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 	iout = 84;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 	iout = 164;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 	iout = 2;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 	char title[81];
-	sprintf(title, "%s", dcd.header.remark1);
+	sprintf(title, "REMARKS CREATED BY dcdio.cpp");
 	pad(title, 80);
-	fwrite(&title, 80, 1, dcd_file);
-	sprintf(title, "%s", dcd.header.remark2);
+	fwrite(&title, 80, 1, this->file);
+	time_t rawtime;
+	struct tm *timeinfo;
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+	sprintf(title, "REMARKS DATE: %s", asctime(timeinfo));
 	pad(title, 80);
-	fwrite(&title, 80, 1, dcd_file);
+	fwrite(&title, 80, 1, this->file);
 	iout = 164;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 	iout = 4;
-	fwrite(&iout, 4, 1, dcd_file);
-	iout = dcd.header.N;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
+	iout = N;
+	fwrite(&iout, 4, 1, this->file);
 	iout = 4;
-	fwrite(&iout, 4, 1, dcd_file);
+	fwrite(&iout, 4, 1, this->file);
 }
 
 /*
  * Writes frame into dcd
  * Input
- *  dcd_file - file to write in
- *  N - number of atoms
  *  X, Y, Z - pointers to arrays with coordinates
  *
  *  Writing format is following
@@ -180,147 +177,109 @@ void dcdWriteHeader( DCD dcd){
  *  4				N*4
  *
  */
-void dcdWriteFrame(DCD dcd){
-	FILE* dcd_file = dcd.file;
+void DCD::write_frame(float *X, float *Y, float *Z) const {
 	int iout;
-	if(dcd.hasUC){
-		iout = 48;
-		fwrite(&iout, 4, 1, dcd_file);
-		fwrite(&dcd.uc.a, 8, 1, dcd_file);
-		fwrite(&dcd.uc.alpha, 8, 1, dcd_file);
-		fwrite(&dcd.uc.b, 8, 1, dcd_file);
-		fwrite(&dcd.uc.beta, 8, 1, dcd_file);
-		fwrite(&dcd.uc.gamma, 8, 1, dcd_file);
-		fwrite(&dcd.uc.c, 8, 1, dcd_file);
-		fwrite(&iout, 4, 1, dcd_file);
-	}
-	iout = dcd.header.N*4;
-	fwrite(&iout, 4, 1, dcd_file);
-	fwrite(dcd.frame.X, 4*dcd.header.N, 1, dcd_file);
-	fwrite(&iout, 4, 1, dcd_file);
-	fwrite(&iout, 4, 1, dcd_file);
-	fwrite(dcd.frame.Y, 4*dcd.header.N, 1, dcd_file);
-	fwrite(&iout, 4, 1, dcd_file);
-	fwrite(&iout, 4, 1, dcd_file);
-	fwrite(dcd.frame.Z, 4*dcd.header.N, 1, dcd_file);
-	fwrite(&iout, 4, 1, dcd_file);
+	iout = N*4;
+	fwrite(&iout, 4, 1, this->file);
+	fwrite(X, 4*N, 1, this->file);
+	fwrite(&iout, 4, 1, this->file);
+
+	fwrite(&iout, 4, 1, this->file);
+	fwrite(Y, 4*N, 1, this->file);
+	fwrite(&iout, 4, 1, this->file);
+
+	fwrite(&iout, 4, 1, this->file);
+	fwrite(Z, 4*N, 1, this->file);
+	fwrite(&iout, 4, 1, this->file);
 }
 
-/*
- * Close DCD after writing
- */
-void dcdClose(DCD dcd){
-	fclose(dcd.file);
-}
-
-
-void dcdOpenRead(DCD* dcd, const char *dcd_filename){
-	dcd->file = fopen(dcd_filename, "r");
-}
-
-void dcdReadHeader(DCD* dcd){
-	FILE* dcd_file = dcd->file;
+void DCD::read_header(){
 	int iin;
 	char cin[5];
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 	if(iin != 84){
-		printf("Error! Wrong DCD file: DCD supposed to have '84' in first 4 bytes, but it hasn't.\n");
-		exit(0);
+		DIE("Error! Wrong DCD file: DCD supposed to have '84' in first 4 bytes, but it hasn't.");
 	}
-	fread(&cin, 4, 1, dcd_file);
+	safe_fread(&cin, 4, 1, this->file);
 	char cord_char[5];
 	sprintf(cord_char, "CORD");
 	if(strncmp(cin, cord_char, 4)){
-		printf("Error! Wrong DCD file: no 'CORD' sequence at the beginning of the file. Found: %s.\n", cin);
-		exit(0);
+		DIE("Error! Wrong DCD file: no 'CORD' sequence at the beginning of the file. Found: %s.", cin);
 	}
 
-	fread(&dcd->header.nfile, 4, 1, dcd_file);
-	fread(&dcd->header.npriv, 4, 1, dcd_file);
-	fread(&dcd->header.nsavc, 4, 1, dcd_file);
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&NFILE, 4, 1, this->file);
+	safe_fread(&NPRIV, 4, 1, this->file);
+	safe_fread(&NSAVC, 4, 1, this->file);
+	safe_fread(&iin, 4, 1, this->file);
 	for(int i = 0; i < 5; i++){
-		fread(&iin, 4, 1, dcd_file);
+		safe_fread(&iin, 4, 1, this->file);
 	}
-	fread(&dcd->header.delta, 4, 1, dcd_file);
-	fread(&iin, 4, 1, dcd_file);
-	dcd->hasUC = iin;
-	for(int i = 0; i < 8; i++){
-		fread(&iin, 4, 1, dcd_file);
-		//printf("%d: %d\n", i+1, iin);
+	safe_fread(&DELTA, 4, 1, this->file);
+	for(int i = 0; i < 9; i++){
+		safe_fread(&iin, 4, 1, this->file);
 	}
 	//24
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 	//84;
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 	//164;
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 	//2;
-	fread(&iin, 4, 1, dcd_file);
-	fread(&dcd->header.remark1, 80, 1, dcd_file);
-	//printf("Title1: %s\n", &dcd->header.remark1);
-	fread(&dcd->header.remark2, 80, 1, dcd_file);
-	//printf("Title2: %s\n", &dcd->header.remark2);
+	safe_fread(&iin, 4, 1, this->file);
+	char title[80];
+	safe_fread(&title, 80, 1, this->file);
+	//printf("Title1: %s\n", title);
+	safe_fread(&title, 80, 1, this->file);
+	//printf("Title2: %s\n", title);
 	//164
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 	//4
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 	//N
-	fread(&dcd->header.N, 4, 1, dcd_file);
+	safe_fread(&N, 4, 1, this->file);
 	//4
-	fread(&iin, 4, 1, dcd_file);
+	safe_fread(&iin, 4, 1, this->file);
 }
 
-int dcdReadFrame(DCD* dcd){
-	FILE* dcd_file = dcd->file;
+int DCD::read_frame(float *X, float *Y, float *Z){
 	int iin;
-	double din;
-	if(dcd->hasUC){
-		fread(&iin, 4, 1, dcd_file);
-		fread(&dcd->uc.a, 4, 1, dcd_file);
-		fread(&dcd->uc.alpha, 4, 1, dcd_file);
-		fread(&dcd->uc.b, 4, 1, dcd_file);
-		fread(&dcd->uc.beta, 4, 1, dcd_file);
-		fread(&dcd->uc.gamma, 4, 1, dcd_file);
-		fread(&dcd->uc.c, 4, 1, dcd_file);
-		/*for(int i = 0; i < 6; i++){
-			fread(&din, 8, 1, dcd_file);
-			printf("%d: %f\n", i+1, din);
-		}*/
-		fread(&iin, 4, 1, dcd_file);
-	}
-	fread(&iin, 4, 1, dcd_file);
-	//printf("%d\n", iin);
-	fread(dcd->frame.X, 4*dcd->header.N, 1, dcd_file);
-	fread(&iin, 4, 1, dcd_file);
-	//printf("%d\n", iin);
-	fread(&iin, 4, 1, dcd_file);
-	//printf("%d\n", iin);
-	fread(dcd->frame.Y, 4*dcd->header.N, 1, dcd_file);
-	fread(&iin, 4, 1, dcd_file);
-	//printf("%d\n", iin);
-	fread(&iin, 4, 1, dcd_file);
-	//printf("%d\n", iin);
-	fread(dcd->frame.Z, 4*dcd->header.N, 1, dcd_file);
-	fread(&iin, 4, 1, dcd_file);
-	//printf("%d\n", iin);
-	if(feof(dcd_file) == 0){
+	safe_fread(&iin, 4, 1, this->file);
+	safe_fread(X, 4*N, 1, this->file);
+	safe_fread(&iin, 4, 1, this->file);
+
+	safe_fread(&iin, 4, 1, this->file);
+	safe_fread(Y, 4*N, 1, this->file);
+	safe_fread(&iin, 4, 1, this->file);
+
+	safe_fread(&iin, 4, 1, this->file);
+	safe_fread(Z, 4*N, 1, this->file);
+	safe_fread(&iin, 4, 1, this->file);
+
+	if(feof(this->file) == 0){
 		return 0;
 	} else {
 		return -1;
 	}
 }
 
+void DCD::goto_header(){
+    rewind(this->file);
+}
+
+void DCD::goto_frame(int frame){
+    goto_header();
+    read_header();
+    const int framesize = 3 * (4 + 4*N + 4);
+    fseek(file, framesize*frame, SEEK_CUR);
+}
+
 void pad(char *s, int len){
 	int curlen;
 	int i;
 	curlen = strlen(s);
-	if (curlen > len){
-		s[len] = '\0';
-		return;
-	}
 	for (i = curlen; i < len; i++){
 		s[i] = ' ';
 	}
-	s[i] = '\0';
+	s[len] = '\0';
 }
+

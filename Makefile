@@ -20,7 +20,8 @@ REACTION_SOURCES	:= \
 	$(SRCDIR)/dcdio.cpp \
     $(SRCDIR)/main.cu \
     $(SRCDIR)/timer.cpp \
-    $(SRCDIR)/xyzio.cpp 
+    $(SRCDIR)/xyzio.cpp \
+    $(SRCDIR)/wrapper.cpp 
 
 all: reaction
 

@@ -9,42 +9,31 @@
 
 #include <stdio.h>
 
-typedef struct {
-	int nfile, npriv, nsavc, nstep, N;
-	float delta;
-	char remark1[80];
-	char remark2[80];
-} DCDHeader;
+struct DCD{
+    FILE* file;
+    int N, NFILE, NPRIV, NSAVC;
+    double DELTA;
+    float *X, *Y, *Z;
 
-typedef struct {
-	float* X;
-	float* Y;
-	float* Z;
-} DCDFrame;
+    void open_read(const char* filename);
+    void open_write(const char* filename);
+    void open_append(const char* filename);
+    void close();
 
-typedef struct {
-	double a, b, c;
-	double alpha, beta, gamma;
-} DCDUnitCell;
+    void write_header() const;
+    void read_header();
+    void write_frame(float *X, float *Y, float *Z) const;
+    void write_frame() const { write_frame(this->X, this->Y, this->Z); }
+    int read_frame(float *X, float *Y, float *Z);
+    int read_frame() { return read_frame(this->X, this->Y, this->Z); }
 
-typedef struct {
-	FILE* file;
-	int hasUC;
-	DCDUnitCell uc;
-	DCDHeader header;
-	DCDFrame frame;
-} DCD;
+    void goto_frame(int frame);
+    void goto_header();
 
-void createDCD(DCD* dcd, int atomCount, int frameCount, int firstFrame, float timestep, int dcdFreq, int hazUC, int UCX, int UCY, int UCZ);
-void destroyDCD(DCD* dcd);
+    void allocate();
+    void deallocate();
 
-void dcdOpenWrite(DCD* dcd, const char *dcd_filename);
-void dcdOpenAppend(DCD* dcd, const char *dcd_filename);
-void dcdOpenRead(DCD* dcd, const char *dcd_filename);
+    DCD() : X(NULL), Y(NULL), Z(NULL) { }
+    ~DCD() { deallocate(); }
+};
 
-void dcdWriteHeader(DCD dcd);
-void dcdWriteFrame(DCD dcd);
-void dcdReadHeader(DCD* dcd);
-int dcdReadFrame(DCD* dcd);
-
-void dcdClose(DCD dcd);
