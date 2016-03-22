@@ -1,30 +1,37 @@
-TARGET = reaction
-LIBS = #-larmadillo -lconfig++ 
-CC = nvcc
-CFLAGS = -O3 #-pg -g -larmadillo -fopenmp
-ODIR = obj
-SRCDIR = src
+CUDA_INSTALL_PATH	:= /usr/local/cuda
+CUDA_ARCH 			:= sm_30
 
-.PHONY: default all clean
+INCLUDES			+= -I$(CUDA_INSTALL_PATH)/include
+LIBS				+= -L$(CUDA_INSTALL_PATH)/lib64
+CFLAGS				:= -O3 -g $(INCLUDES)
+LDFLAGS				:= $(LIBS) -lrt -lm -lcudart
 
-default: $(TARGET)
-all: default
+# compilers
+NVCC				:= $(CUDA_INSTALL_PATH)/bin/nvcc -arch $(CUDA_ARCH) --ptxas-options=-v -use_fast_math
+CXX					:= g++
+LINKER				:= g++ -fPIC
 
-OBJECTS = $(patsubst $(SRCDIR)/%.cpp, $(ODIR)/%.o, $(wildcard $(SRCDIR)/*.cpp))
-OBJECTS_CU = $(patsubst $(SRCDIR)/%.cu, $(ODIR)/%.o, $(wildcard $(SRCDIR)/*.cu))
-HEADERS = $(wildcard *.h)
+OBJDIR				:= obj
+SRCDIR				:= src
+include common.mk
 
-$(ODIR)/%.o: $(SRCDIR)/%.cpp 
-	$(CC) $(CFLAGS) -c $< -o $@
+# files
+REACTION_SOURCES	:= \
+	$(SRCDIR)/dcdio.cpp \
+    $(SRCDIR)/main.cu \
+    $(SRCDIR)/timer.cpp \
+    $(SRCDIR)/xyzio.cpp 
 
-$(ODIR)/%.o: $(SRCDIR)/%.cu 
-	$(CC) $(CFLAGS) -c $< -o $@
+all: reaction
 
-.PRECIOUS: $(TARGET) $(OBJECTS) $(OBJECTS_CU)
-
-$(TARGET): $(OBJECTS) $(OBJECTS_CU)
-	$(CC) -pg -g $(OBJECTS) $(OBJECTS_CU) $(LIBS) -o $@
+REACTION_OBJS			:= $(call objects, $(REACTION_SOURCES))
+-include $(REACTION_OBJS:.o=.d)
+ 
+reaction: $(REACTION_OBJS)
+	$(LINKER) -o $@ $(REACTION_OBJS) $(LDFLAGS)
 
 clean:
-	-rm -f $(ODIR)/*.o
-	-rm -f $(TARGET)
+	rm -f reaction
+	rm -rf "$(OBJDIR)"
+	
+.PHONY: makedirs clean all
