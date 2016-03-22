@@ -360,7 +360,7 @@ int main(int argc, char **argv)
     DCD vels;
     int Nsteps = 25000000;
     int pairsfreq = 100;
-    int dcdfreq = 1000;
+    int dcdfreq = 10;
     dcd.N = 3*in_xyz.atomCount; vels.N = 3*in_xyz.atomCount;
     dcd.NFILE = Nsteps/dcdfreq; vels.NFILE = Nsteps/dcdfreq;
     dcd.NPRIV = 1;              vels.NPRIV = 1;
