@@ -140,9 +140,9 @@ __global__ void perform_collisions(d_Particles parts, curandState *state, int at
             {
                 int j = parts.nearest[i];
                 float3 vi = parts.v[i];
-                float ei = parts.m[i]*(vi.x*vi.x+vi.y*vi.y+vi.z*vi.z);
+                float ei = parts.m[i]*(vi.x*vi.x+vi.y*vi.y+vi.z*vi.z)/2;
                 float3 vj = parts.v[j];
-                float ej = parts.m[j]*(vj.x*vj.x+vj.y*vj.y+vj.z*vj.z);
+                float ej = parts.m[j]*(vj.x*vj.x+vj.y*vj.y+vj.z*vj.z)/2;
                 if(ei + ej > E_ACT)
                 {
                         float scale = sqrt(2*(ei+ej-E_ACT+DH)/(parts.m[i]+parts.m[j]));
