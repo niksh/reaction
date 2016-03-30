@@ -13,13 +13,13 @@
 
 #define R_ACT (0.1f)
 #define E_ACT (5000.0f) //J/mol
-#define DH (5000.0f) //J/mol
+#define DH (7500.0f) //J/mol
 #define DT (2.4e-6) //nsec
 #define LIMIT (100.0f) //nm
 #define PAIRSCUTOFF (16.0f)
 #define MAXPAIRS (1000)
-#define HARMCUTOFF (1.0f)
-#define HARMSCALE (5000.0f)
+#define HARMCUTOFF (2.0f)
+#define HARMSCALE (0.0f)
 
 #define TYPENONE (0)
 #define TYPEA (1)
@@ -56,6 +56,7 @@ typedef struct
 typedef struct
 {
     float3 *c;
+    float3 *mid_c;
     float3 *v;
     float *m;
     int *t;
@@ -83,21 +84,20 @@ __global__ void find_nearest(d_Particles parts, int atom_count)
         parts.nearest_dist[i] = FLT_MAX;
         parts.nearest[i] = -1;
         float3 pi = parts.c[i];
+        int ti = parts.t[i];
         for(unsigned int p = 0; p < parts.pairsCount[i]; p++)
         {
             int j = parts.pairs[p*atom_count+i];
-            if( (parts.t[i] != parts.t[j]) && (parts.t[j] != TYPENONE) && (i != j))
+            int tj = parts.t[j];
+            if( (ti != tj) && (tj != TYPENONE) && (i != j) && ( ((ti==TYPEA)&&(tj==TYPEB)) || ((ti==TYPEB)&&(tj==TYPEA)) ) )
             {
-//                if(parts.nearest[i] >= 0)
-                {
-                    float3 pj = parts.c[j];
-                    float dist = getDistance(pi,pj,LIMIT);
+                float3 pj = parts.c[j];
+                float dist = getDistance(pi,pj,LIMIT);
 
-                    if(parts.nearest_dist[i] > dist)
-                    {
-                        parts.nearest_dist[i] = dist;
-                        parts.nearest[i] = j;
-                    }
+                if(parts.nearest_dist[i] > dist)
+                {
+                    parts.nearest_dist[i] = dist;
+                    parts.nearest[i] = j;
                 }
             }
         }
@@ -117,7 +117,7 @@ __global__ void pairlistGPU(d_Particles parts, int atom_count)
 			if ( (j != i) && (parts.t[j] != TYPENONE) )
             {
 				float3 rj = parts.c[j];
-				if( (getDistance(ri, rj, LIMIT) < PAIRSCUTOFF) && pairsCount < MAXPAIRS)
+				if( (getDistance(ri, rj, LIMIT) < PAIRSCUTOFF) && (pairsCount < MAXPAIRS) )
                 {
 					parts.pairs[pairsCount*atom_count + i] = j;
 					pairsCount ++;
@@ -133,10 +133,12 @@ __global__ void perform_collisions(d_Particles parts, curandState *state, int at
     int i = blockIdx.x*blockDim.x + threadIdx.x;
     if(i < atom_count)
     {
+        int ti = parts.t[i];
+        int near_i = parts.nearest[i];
 //        if( (parts.nearest_dist[i] < R_ACT) && (parts.nearest[parts.nearest[i]] == i) )
         if(parts.nearest[i] >= 0)
         {
-            if( (parts.nearest_dist[i] < R_ACT) && (parts.nearest[parts.nearest[i]] == i) && (parts.t[i] == TYPEA) && (parts.t[parts.nearest[i]] == TYPEB) && (parts.t[i] != TYPENONE) )
+            if( (parts.nearest_dist[i] < R_ACT) && (parts.nearest[near_i] == i) && (ti == TYPEA) && (parts.t[near_i] == TYPEB) && (ti != TYPENONE) )
             {
                 int j = parts.nearest[i];
                 float3 vi = parts.v[i];
@@ -151,7 +153,7 @@ __global__ void perform_collisions(d_Particles parts, curandState *state, int at
                         parts.v[j].x = sinf(teta)*cosf(phi)*scale;
                         parts.v[j].y = sinf(teta)*sin(phi)*scale;
                         parts.v[j].z = cosf(teta)*scale;
-                        parts.t[j] = 3;
+                        parts.t[j] = TYPEC;
                         //destroy A
                         parts.c[i].x = 0;
                         parts.c[i].y = 0;
@@ -159,7 +161,7 @@ __global__ void perform_collisions(d_Particles parts, curandState *state, int at
                         parts.v[i].x = 0;
                         parts.v[i].y = 0;
                         parts.v[i].z = 0;
-                        parts.t[i] = 0;
+                        parts.t[i] = TYPENONE;
 
                 }
             }
@@ -185,6 +187,71 @@ __global__ void integrate(d_Particles parts, int atom_count)
             parts.f[i].y = 0;
             parts.f[i].z = 0;
             
+            if( (!isfinite(parts.c[i].x)) || (!isfinite(parts.c[i].y)) || (!isfinite(parts.c[i].z)))
+            {
+                parts.t[i] = TYPENONE;
+            }
+        }
+    }
+}
+
+__global__ void integrateLF(d_Particles parts, int atom_count)
+{
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    if(i < atom_count)
+    {
+        if(parts.t[i] != TYPENONE)
+        {
+            float m = parts.m[i];
+            float3 mid = parts.mid_c[i];
+            float3 v = parts.v[i];
+            float3 f = parts.f[i];
+            float mult = DT/m;
+
+            v.x += mult*f.x;
+            v.y += mult*f.y;
+            v.z += mult*f.z;
+
+            mid.x = v.x*DT;
+            mid.y = v.y*DT;
+            mid.z = v.z*DT;
+            
+            f.x = 0;
+            f.y = 0;
+            f.z = 0;
+            parts.f[i] = f;
+            parts.mid_c[i] = mid;
+
+            if( (!isfinite(parts.c[i].x)) || (!isfinite(parts.c[i].y)) || (!isfinite(parts.c[i].z)))
+            {
+                parts.t[i] = TYPENONE;
+            }
+        }
+    }
+}
+
+__global__ void integrateLF_final(d_Particles parts, int atom_count)
+{
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    if(i < atom_count)
+    {
+        if(parts.t[i] != TYPENONE)
+        {
+            float3 c = parts.c[i];
+            float3 mid = parts.mid_c[i];
+            float3 v = parts.v[i];
+
+            v.x = mid.x/DT;
+            v.y = mid.y/DT;
+            v.z = mid.z/DT;
+
+            c.x += mid.x;
+            c.y += mid.y;
+            c.z += mid.z;
+            c = transferPBC(c, LIMIT);
+            parts.c[i] = c;
+            parts.v[i] = v;
+
             if( (!isfinite(parts.c[i].x)) || (!isfinite(parts.c[i].y)) || (!isfinite(parts.c[i].z)))
             {
                 parts.t[i] = TYPENONE;
@@ -262,7 +329,7 @@ __global__ void computeHarmPairlist(d_Particles parts, int atom_count)
                 float df = 0.0f;
                 if(rijmod <= HARMCUTOFF)
                 {
-                    df += HARMSCALE*(rijmod - HARMCUTOFF)*(rijmod - HARMCUTOFF);
+                    df += 2*HARMSCALE*(rijmod - HARMCUTOFF)/rijmod;
                 }
 
                 if(!isfinite(df))
@@ -346,6 +413,7 @@ int main(int argc, char **argv)
     d_part.nearest = part.nearest.d_ptr();
     d_part.nearest_dist = part.nearest_dist.d_ptr();
     cudaMalloc((void**)&(d_part.f), in_xyz.atomCount * sizeof(float3));
+    cudaMalloc((void**)&(d_part.mid_c), in_xyz.atomCount * sizeof(float3));
     cudaMalloc((void**)&(d_part.pairsCount), in_xyz.atomCount * sizeof(int));
     cudaMalloc((void**)&(d_part.pairs), in_xyz.atomCount* MAXPAIRS * sizeof(int));
     checkCUDAError();
@@ -360,13 +428,13 @@ int main(int argc, char **argv)
     DCD vels;
     int Nsteps = 25000000;
     int pairsfreq = 100;
-    int dcdfreq = 10;
+    int dcdfreq = 1000;
     dcd.N = 3*in_xyz.atomCount; vels.N = 3*in_xyz.atomCount;
     dcd.NFILE = Nsteps/dcdfreq; vels.NFILE = Nsteps/dcdfreq;
     dcd.NPRIV = 1;              vels.NPRIV = 1;
     dcd.NSAVC = dcdfreq;        vels.NSAVC = dcdfreq;
     dcd.DELTA = DT;             vels.DELTA = DT;
-    dcd.open_write("out.dcd");  vels.open_write("out.dcd");
+    dcd.open_write("out.dcd");  vels.open_write("out_vels.dcd");
     dcd.write_header();         vels.write_header();
     dcd.allocate();             vels.allocate();
     std::cout<<"Starting simulation with "<<part.c.d.size()<<" particles."<<std::endl;
@@ -388,7 +456,9 @@ int main(int argc, char **argv)
 //        exit(0);
         perform_collisions<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, devState, in_xyz.atomCount);
         checkCUDAError();
-        integrate<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
+//        integrate<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
+        integrateLF<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
+        integrateLF_final<<<(in_xyz.atomCount)/BLOCK_SIZE+1, BLOCK_SIZE>>>(d_part, in_xyz.atomCount);
         
         if(step%dcdfreq == 0)
         {
