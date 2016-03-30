@@ -12,14 +12,14 @@
 #include "timer.h"
 
 #define R_ACT (0.1f)
-#define E_ACT (5000.0f) //J/mol
-#define DH (7500.0f) //J/mol
-#define DT (2.4e-6) //nsec
+#define E_ACT (5000000000.0f) //J/mol
+#define DH (0.0f) //J/mol
+#define DT (1e-6) //nsec
 #define LIMIT (100.0f) //nm
 #define PAIRSCUTOFF (16.0f)
 #define MAXPAIRS (1000)
 #define HARMCUTOFF (2.0f)
-#define HARMSCALE (0.0f)
+#define HARMSCALE (1250.0f)
 
 #define TYPENONE (0)
 #define TYPEA (1)
@@ -190,6 +190,12 @@ __global__ void integrate(d_Particles parts, int atom_count)
             if( (!isfinite(parts.c[i].x)) || (!isfinite(parts.c[i].y)) || (!isfinite(parts.c[i].z)))
             {
                 parts.t[i] = TYPENONE;
+                parts.c[i].x = 0;
+                parts.c[i].y = 0;
+                parts.c[i].z = 0;
+                parts.v[i].x = 0;
+                parts.v[i].y = 0;
+                parts.v[i].z = 0;
             }
         }
     }
@@ -225,6 +231,12 @@ __global__ void integrateLF(d_Particles parts, int atom_count)
             if( (!isfinite(parts.c[i].x)) || (!isfinite(parts.c[i].y)) || (!isfinite(parts.c[i].z)))
             {
                 parts.t[i] = TYPENONE;
+                parts.c[i].x = 0;
+                parts.c[i].y = 0;
+                parts.c[i].z = 0;
+                parts.v[i].x = 0;
+                parts.v[i].y = 0;
+                parts.v[i].z = 0;
             }
         }
     }
@@ -354,7 +366,7 @@ __global__ void computeHarmPairlist(d_Particles parts, int atom_count)
 
 int main(int argc, char **argv)
 {
-    cudaSetDevice(1);
+    cudaSetDevice(0);
     std::map<char, int> name2ind;
     name2ind['H'] = TYPEA;
     name2ind['O'] = TYPEB;
@@ -428,7 +440,7 @@ int main(int argc, char **argv)
     DCD vels;
     int Nsteps = 25000000;
     int pairsfreq = 100;
-    int dcdfreq = 1000;
+    int dcdfreq = 100;
     dcd.N = 3*in_xyz.atomCount; vels.N = 3*in_xyz.atomCount;
     dcd.NFILE = Nsteps/dcdfreq; vels.NFILE = Nsteps/dcdfreq;
     dcd.NPRIV = 1;              vels.NPRIV = 1;
@@ -477,6 +489,8 @@ int main(int argc, char **argv)
             double E = 0;
             for(unsigned int i = 0; i < in_xyz.atomCount; i++)
             {   
+                if(part.t.h[i] == TYPENONE)
+                    continue;
                 int offset;
                 if(part.t.h[i] == TYPEA)
                 {
@@ -500,7 +514,7 @@ int main(int argc, char **argv)
                 if (part.t.h[i] != TYPENONE)
                 {
                     float m = ind2mass[part.t.h[i]];
-                    v2 = vels.X[offset]*vels.X[offset];
+                    v2 += vels.X[offset]*vels.X[offset];
                     v2 += vels.Y[offset]*vels.Y[offset];
                     v2 += vels.Z[offset]*vels.Z[offset];
                     E += m*v2/2;
