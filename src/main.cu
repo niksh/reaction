@@ -12,10 +12,10 @@
 #include "timer.h"
 
 #define R_ACT (0.1f)
-#define E_ACT (5000000000.0f) //J/mol
-#define DH (0.0f) //J/mol
+#define E_ACT (5000.0f) //J/mol
+#define DH (7500.0f) //J/mol
 #define DT (1e-6) //nsec
-#define LIMIT (100.0f) //nm
+#define LIMIT (102.0f) //nm
 #define PAIRSCUTOFF (16.0f)
 #define MAXPAIRS (1000)
 #define HARMCUTOFF (2.0f)
@@ -341,7 +341,7 @@ __global__ void computeHarmPairlist(d_Particles parts, int atom_count)
                 float df = 0.0f;
                 if(rijmod <= HARMCUTOFF)
                 {
-                    df += 2*HARMSCALE*(rijmod - HARMCUTOFF)/rijmod;
+                    df += -2*HARMSCALE*(rijmod - HARMCUTOFF)/rijmod;
                 }
 
                 if(!isfinite(df))
@@ -440,7 +440,7 @@ int main(int argc, char **argv)
     DCD vels;
     int Nsteps = 25000000;
     int pairsfreq = 100;
-    int dcdfreq = 100;
+    int dcdfreq = 1000;
     dcd.N = 3*in_xyz.atomCount; vels.N = 3*in_xyz.atomCount;
     dcd.NFILE = Nsteps/dcdfreq; vels.NFILE = Nsteps/dcdfreq;
     dcd.NPRIV = 1;              vels.NPRIV = 1;

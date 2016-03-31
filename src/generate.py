@@ -23,11 +23,11 @@ def printProgress (iteration, total, prefix = '', suffix = '', decimals = 2, bar
 N = int(argv[1])
 limit = float(argv[2])
 
-T=10.0
+T = 300.0
 R = 8.314
 #m/s to nm/nsec
 meters_sec_to_units = 1.0
-eps = 2.0
+eps = 3.0
 
 mols = {'H':0.012,'O':0.016}
 moltypes = list(mols.keys())
